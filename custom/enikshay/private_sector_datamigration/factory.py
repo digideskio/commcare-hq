@@ -113,16 +113,7 @@ class BeneficiaryCaseFactory(object):
             kwargs['attrs']['update']['other_id_number'] = self.beneficiary.identificationNumber
             kwargs['attrs']['update']['other_id_type'] = self.beneficiary.other_id_type
 
-        agency = (
-            self._episode.treating_provider or self.beneficiary.referred_provider
-            if self._episode else self.beneficiary.referred_provider
-        )
-        assert agency is not None
-        facility_assigned_to = SQLLocation.active_objects.get(
-            domain=self.domain,
-            site_code=agency.nikshayId,
-        ).location_id
-        kwargs['attrs']['update']['facility_assigned_to'] = facility_assigned_to
+        kwargs['attrs']['update']['facility_assigned_to'] = self._location_owner_id
 
         if self._episode:
             kwargs['attrs']['update']['diabetes_status'] = self._episode.diabetes_status
@@ -132,15 +123,15 @@ class BeneficiaryCaseFactory(object):
                 kwargs['attrs']['owner_id'] = ARCHIVED_CASE_OWNER_ID
                 kwargs['attrs']['update']['archive_reason'] = self._episode.treatment_outcome
                 kwargs['attrs']['update']['is_active'] = 'no'
-                kwargs['attrs']['update']['last_owner'] = facility_assigned_to
+                kwargs['attrs']['update']['last_owner'] = self._location_owner_id
                 if self._episode.treatment_outcome == 'died':
                     kwargs['attrs']['close'] = True
                     kwargs['attrs']['update']['last_reason_to_close'] = self._episode.treatment_outcome
             else:
-                kwargs['attrs']['owner_id'] = facility_assigned_to
+                kwargs['attrs']['owner_id'] = self._location_owner_id
                 kwargs['attrs']['update']['is_active'] = 'yes'
         else:
-            kwargs['attrs']['owner_id'] = facility_assigned_to
+            kwargs['attrs']['owner_id'] = self._location_owner_id
 
         return CaseStructure(**kwargs)
 
@@ -181,6 +172,7 @@ class BeneficiaryCaseFactory(object):
                 'owner_id': '-',
                 'update': {
                     'date_of_mo_signature': self.beneficiary.dateOfRegn.date(),
+                    'diagnosing_facility_id': self._location_owner_id,
                     'dots_99_enabled': 'false',  # TODO - confirm or fix
                     'enrolled_in_private': 'true',
                     'episode_id': get_human_friendly_id(),
@@ -214,12 +206,16 @@ class BeneficiaryCaseFactory(object):
             )
             kwargs['attrs']['update']['new_retreatment'] = self._episode.new_retreatment
             kwargs['attrs']['update']['patient_type'] = self._episode.patient_type
+            kwargs['attrs']['update']['private_sector_episode_pending_registration'] = (
+                'yes' if self._episode.nikshayID is None else 'no'
+            )
             kwargs['attrs']['update']['retreatment_reason'] = self._episode.retreatment_reason
             kwargs['attrs']['update']['site'] = self._episode.site_property
             kwargs['attrs']['update']['site_choice'] = self._episode.site_choice
             kwargs['attrs']['update']['treatment_card_completed_date'] = self._episode.creationDate.date()
             kwargs['attrs']['update']['treatment_initiated'] = 'yes_private'
             kwargs['attrs']['update']['treatment_initiation_date'] = rx_start_datetime.date()
+            kwargs['attrs']['update']['treatment_phase'] = self._episode.treatment_phase
             kwargs['attrs']['update']['weight'] = int(self._episode.patientWeight)
 
             if self._episode.nikshayID:
@@ -239,6 +235,7 @@ class BeneficiaryCaseFactory(object):
                 kwargs['attrs']['close'] = True
         else:
             kwargs['attrs']['update']['episode_pending_registration'] = 'yes'
+            kwargs['attrs']['update']['private_sector_episode_pending_registration'] = 'yes'
             kwargs['attrs']['update']['treatment_initiated'] = 'no'
 
         return CaseStructure(**kwargs)
@@ -338,3 +335,24 @@ class BeneficiaryCaseFactory(object):
             return list(LabTest.objects.filter(episodeId=self._episode))
         else:
             return []
+
+    @property
+    @memoized
+    def _agency(self):
+        return (
+            self._episode.treating_provider or self.beneficiary.referred_provider
+            if self._episode else self.beneficiary.referred_provider
+        )
+
+    @property
+    @memoized
+    def _location_owner(self):
+        return SQLLocation.active_objects.get(
+            domain=self.domain,
+            site_code=str(self._agency.agencyId),
+        )
+
+    @property
+    @memoized
+    def _location_owner_id(self):
+        return self._location_owner.location_id
